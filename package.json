@@ -1,0 +1,16 @@
+{
+  "name": "imperva-solver",
+  "version": "0.1.0",
+  "description": "imperva/incapsula ___utmvc cookie generator",
+  "main": "main.js",
+  "bin": {
+    "imperva-solver": "./main.js"
+  },
+  "scripts": {
+    "start": "node main.js"
+  },
+  "dependencies": {
+    "isolated-vm": "^6.1.2",
+    "playwright": "^1.58.2"
+  }
+}
