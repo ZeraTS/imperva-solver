@@ -8,7 +8,8 @@ const { URL } = require('url');
 
 // follows redirects, returns { body, headers, statusCode }
 // collectRedirectBodies: if true, return bodies from ALL steps (for SWJIYLWA hunting)
-function get(urlStr, headers, collectRedirectBodies) {
+// maxHops: maximum number of redirects to follow before throwing
+function get(urlStr, headers, collectRedirectBodies, maxHops = 10) {
   return new Promise((resolve, reject) => {
     const url = new URL(urlStr);
     const lib = url.protocol === 'https:' ? https : http;
@@ -33,9 +34,31 @@ function get(urlStr, headers, collectRedirectBodies) {
       res.on('end', () => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           const next = new URL(res.headers.location, urlStr).toString();
+
+          // SSRF protection: validate redirect destination
+          const nextUrl = new URL(next);
+          if (nextUrl.protocol !== 'https:') {
+            return reject(new Error('SSRF protection: redirect must use https, got: ' + nextUrl.protocol));
+          }
+          const h = nextUrl.hostname;
+          if (
+            h === '127.0.0.1' ||
+            h === 'localhost' ||
+            /^10\./.test(h) ||
+            /^192\.168\./.test(h) ||
+            /^169\.254\./.test(h)
+          ) {
+            return reject(new Error('SSRF protection: redirect to private/internal host blocked: ' + h));
+          }
+
+          // Hop limit check
+          if (maxHops <= 0) {
+            return reject(new Error('Too many redirects (maxHops exceeded)'));
+          }
+
           if (collectRedirectBodies) {
             // include bodies from intermediate redirects (for SWJIYLWA discovery)
-            return get(next, headers, true).then((result) => {
+            return get(next, headers, true, maxHops - 1).then((result) => {
               resolve({
                 body: result.body,
                 headers: result.headers,
@@ -44,7 +67,7 @@ function get(urlStr, headers, collectRedirectBodies) {
               });
             }).catch(reject);
           }
-          return get(next, headers).then(resolve).catch(reject);
+          return get(next, headers, false, maxHops - 1).then(resolve).catch(reject);
         }
         resolve({ body, headers: res.headers, statusCode: res.statusCode });
       });
