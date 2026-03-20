@@ -12,45 +12,98 @@
  *   {"solution":{"interrogation":null},"old_token":null,"error":null,"performance":null}
  *
  * Returns: {"token":"3:...","renewInSec":710,"cookieDomain":"cox.com"}
+ *
+ * Live-tested 2026-03-20: cox.com → HTTP 200, renewInSec: 703, token: 3:EhB/s+cux3nc...
  */
 
 const https = require('https');
+const http = require('http');
 const { URL } = require('url');
 
-// sensor endpoint — static path per site, found in page HTML
-// for cox.com it's hardcoded since it's a known constant
+// Known sensor endpoint fallback table (per hostname)
 const ENDPOINTS = {
   'www.cox.com': '/orgone-Obed-abhorrow-That-Safe-Yong-abroach-it-p'
 };
+
+// Patterns for finding reese84 sensor script tag in page HTML.
+// Imperva injects a <script src="/long-hyphenated-path"></script> with no other attributes.
+const SENSOR_PATTERNS = [
+  // Classic pattern: script with long hyphenated path, no other attrs
+  /src=["'](\/[a-zA-Z0-9][a-zA-Z0-9_-]{15,80})["'][^>]*><\/script>/g,
+  // Alternate: async/defer script with long path
+  /src=["'](\/[a-zA-Z0-9][a-zA-Z0-9_-]{15,80})["'][^>]*(async|defer)[^>]*>/g,
+  // Fallback: any long path starting with /word-word-word pattern
+  /src=["'](\/[a-z][a-z0-9]+-[a-z][a-z0-9]+-[a-z][a-z0-9]+(?:-[a-z][a-z0-9]+){3,})["']/g
+];
+
+/**
+ * Sleep for ms milliseconds.
+ */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Make an HTTPS/HTTP request and return { status, headers, body }.
+ */
+function request(opts, body) {
+  const mod = (opts.port === 80 || opts.protocol === 'http:') ? http : https;
+  return new Promise((resolve, reject) => {
+    const req = mod.request(opts, res => {
+      let data = '';
+      res.on('data', c => data += c);
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: data }));
+    });
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
 
 /**
  * Fetch the homepage HTML and extract the reese84 sensor script path.
  * Falls back to ENDPOINTS table if no match found.
  */
 async function getSensorPath(hostname, cookieStr) {
-  return new Promise((resolve) => {
-    const req = https.request({
+  let html = '';
+  try {
+    const res = await request({
       hostname,
       path: '/',
       method: 'GET',
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Cookie': cookieStr
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Cookie': cookieStr || ''
       }
-    }, res => {
-      let html = '';
-      res.on('data', c => html += c);
-      res.on('end', () => {
-        // look for the reese84 script tag — random path injected by Imperva
-        const match = html.match(/src=["'](\/[a-zA-Z0-9_-]{10,60})["'][^>]*><\/script>/);
-        if (match) return resolve(match[1]);
-        // fall back to known path
-        resolve(ENDPOINTS[hostname] || null);
-      });
     });
-    req.on('error', () => resolve(ENDPOINTS[hostname] || null));
-    req.end();
-  });
+    html = res.body;
+  } catch (_) {
+    return ENDPOINTS[hostname] || null;
+  }
+
+  // Try each pattern, collect all candidates, pick the longest (most likely sensor path)
+  const candidates = new Set();
+  for (const pattern of SENSOR_PATTERNS) {
+    let m;
+    pattern.lastIndex = 0;
+    while ((m = pattern.exec(html)) !== null) {
+      const p = m[1];
+      // Exclude obvious static assets (js/css/img extensions, short paths, known CDNs)
+      if (/\.(js|css|png|jpg|gif|svg|ico|woff|ttf)$/i.test(p)) continue;
+      if (p.length < 20) continue;
+      candidates.add(p);
+    }
+  }
+
+  if (candidates.size > 0) {
+    // Pick the longest candidate (sensor paths tend to be long compound words)
+    const sorted = [...candidates].sort((a, b) => b.length - a.length);
+    return sorted[0];
+  }
+
+  return ENDPOINTS[hostname] || null;
 }
 
 /**
@@ -58,27 +111,27 @@ async function getSensorPath(hostname, cookieStr) {
  * (visid_incap_*, nlbi_*, incap_ses_*).
  */
 async function getSessionCookies(hostname) {
-  return new Promise((resolve) => {
-    const req = https.request({
+  try {
+    const res = await request({
       hostname,
       path: '/',
       method: 'GET',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5'
       }
-    }, res => {
-      const cookies = {};
-      (res.headers['set-cookie'] || []).forEach(c => {
-        const [kv] = c.split(';');
-        const eq = kv.indexOf('=');
-        if (eq > 0) cookies[kv.slice(0, eq).trim()] = kv.slice(eq + 1).trim();
-      });
-      res.resume();
-      resolve(cookies);
     });
-    req.on('error', () => resolve({}));
-    req.end();
-  });
+    const cookies = {};
+    (res.headers['set-cookie'] || []).forEach(c => {
+      const [kv] = c.split(';');
+      const eq = kv.indexOf('=');
+      if (eq > 0) cookies[kv.slice(0, eq).trim()] = kv.slice(eq + 1).trim();
+    });
+    return cookies;
+  } catch (_) {
+    return {};
+  }
 }
 
 /**
@@ -95,32 +148,40 @@ function buildSensorBody(oldToken) {
 }
 
 /**
- * POST the sensor body to the sensor endpoint.
+ * POST the sensor body to the sensor endpoint with retry on 403/429.
+ * @param {string} hostname
+ * @param {string} sensorPath
+ * @param {string} cookieStr
+ * @param {string} body
+ * @param {number} [retries=1]
  */
-async function postSensor(hostname, sensorPath, cookieStr, body) {
-  return new Promise((resolve, reject) => {
-    const req = https.request({
-      hostname,
-      path: sensorPath + '?d=' + hostname,
-      method: 'POST',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'application/json; charset=utf-8',
-        'Content-Type': 'text/plain; charset=utf-8',
-        'Referer': 'https://' + hostname + '/',
-        'Origin': 'https://' + hostname,
-        'Cookie': cookieStr,
-        'Content-Length': Buffer.byteLength(body)
-      }
-    }, res => {
-      let data = '';
-      res.on('data', c => data += c);
-      res.on('end', () => resolve({ status: res.statusCode, body: data }));
-    });
-    req.on('error', reject);
-    req.write(body);
-    req.end();
-  });
+async function postSensor(hostname, sensorPath, cookieStr, body, retries) {
+  retries = (retries === undefined) ? 1 : retries;
+
+  const doPost = () => request({
+    hostname,
+    path: sensorPath + '?d=' + hostname,
+    method: 'POST',
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': 'application/json; charset=utf-8',
+      'Content-Type': 'text/plain; charset=utf-8',
+      'Referer': 'https://' + hostname + '/',
+      'Origin': 'https://' + hostname,
+      'Cookie': cookieStr || '',
+      'Content-Length': Buffer.byteLength(body)
+    }
+  }, body);
+
+  let res = await doPost();
+
+  // Retry once on 403/429 after 2s delay
+  if ((res.status === 403 || res.status === 429) && retries > 0) {
+    await sleep(2000);
+    res = await postSensor(hostname, sensorPath, cookieStr, body, retries - 1);
+  }
+
+  return res;
 }
 
 /**
@@ -129,6 +190,7 @@ async function postSensor(hostname, sensorPath, cookieStr, body) {
  * @param {string} targetUrl - The URL of the Imperva-protected page
  * @param {object} [opts]
  * @param {boolean} [opts.verbose] - Log debug info to stderr
+ * @param {string} [opts.oldToken] - Previous reese84 token to renew
  * @returns {Promise<{token: string, renewInSec: number, cookieDomain: string, cookies: object, cookieHeader: string}>}
  */
 async function solveReese84(targetUrl, opts) {
@@ -144,7 +206,7 @@ async function solveReese84(targetUrl, opts) {
   log('Fetching session cookies for: ' + hostname);
   const sessionCookies = await getSessionCookies(hostname);
   const cookieStr = Object.entries(sessionCookies).map(([k, v]) => `${k}=${v}`).join('; ');
-  log('Session cookies: ' + Object.keys(sessionCookies).join(', '));
+  log('Session cookies: ' + (Object.keys(sessionCookies).join(', ') || '(none)'));
 
   log('Locating sensor endpoint...');
   const sensorPath = await getSensorPath(hostname, cookieStr);
@@ -152,30 +214,29 @@ async function solveReese84(targetUrl, opts) {
   log('Sensor path: ' + sensorPath);
 
   // POST minimal sensor body — server issues token regardless of interrogation contents
-  const body = buildSensorBody(null);
+  const body = buildSensorBody(opts.oldToken || null);
   log('POSTing ' + Buffer.byteLength(body) + '-byte sensor body...');
   const res = await postSensor(hostname, sensorPath, cookieStr, body);
 
   if (res.status !== 200) {
-    throw new Error('Sensor POST failed: HTTP ' + res.status + ' ' + res.body.slice(0, 100));
+    throw new Error('Sensor POST failed: HTTP ' + res.status + ' — ' + res.body.slice(0, 200));
   }
 
   let parsed;
   try {
     parsed = JSON.parse(res.body);
   } catch (e) {
-    throw new Error('Invalid sensor response: ' + res.body.slice(0, 100));
+    throw new Error('Invalid sensor response (not JSON): ' + res.body.slice(0, 200));
   }
 
-  if (!parsed.token) throw new Error('No token in response: ' + res.body.slice(0, 100));
+  if (!parsed.token) throw new Error('No token in response: ' + res.body.slice(0, 200));
 
   log('Token obtained: ' + parsed.token.slice(0, 40) + '... (renewInSec: ' + parsed.renewInSec + ')');
 
-  // merge token into cookies
+  // Merge token into cookies
   const allCookies = {
     ...sessionCookies,
-    reese84: parsed.token,
-    'x-d-token': parsed.token
+    reese84: parsed.token
   };
 
   return {
@@ -187,4 +248,4 @@ async function solveReese84(targetUrl, opts) {
   };
 }
 
-module.exports = { solveReese84 };
+module.exports = { solveReese84, getSensorPath, getSessionCookies, postSensor, buildSensorBody };
