@@ -90,3 +90,12 @@ imperva-solver/
 - **aih field:** Application Integrity Hash = `h/5b79RoLzK5nEK6xCSAQ2B3F8Bo/P51ygfzCZ06cfM=`
 
 All POST variants returning HTTP 400 without valid PoW solution — confirming server-side PoW validation is strict. Real browser execution is the correct approach.
+
+---
+
+## Update: reese84 Pure Node.js (no browser)
+
+Finding: Imperva ABP server accepts solution.interrogation=null — degraded mode issues tokens without validating PoW.
+Result: Both utmvc and reese84 now solved in pure Node.js. No Playwright, no WASM, no browser.
+POST body: {"solution":{"interrogation":null},"old_token":null,"error":null,"performance":null}
+Token returned: 3:... (renewInSec: 710)

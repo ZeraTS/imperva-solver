@@ -2,6 +2,8 @@
 
 Imperva/Incapsula challenge solver supporting both legacy `___utmvc` and modern `reese84` bot protection.
 
+**100% pure Node.js — no browser, no Playwright, no WebAssembly execution required.**
+
 ## Supported Challenge Types
 
 | Challenge | Cookie | Sites |
@@ -13,8 +15,9 @@ Imperva/Incapsula challenge solver supporting both legacy `___utmvc` and modern 
 
 ```bash
 npm install
-npx playwright install chromium  # required for reese84
 ```
+
+No browser install needed. Both challenge types run natively in Node.js.
 
 ## Usage
 
@@ -38,12 +41,20 @@ node main.js --target https://www.corteva.com --call https://www.corteva.com/som
 4. Run the challenge script in Node.js `vm` sandbox
 5. Return generated `___utmvc` cookie + session cookies
 
-### reese84 (modern)
-1. Launch headless Chromium via Playwright
-2. Navigate to the target URL
-3. Imperva's sensor script runs natively, collects fingerprint + solves WASM PoW
-4. Intercept the POST response to capture the returned token
-5. Return `reese84` token + all session cookies
+### reese84 (modern) — pure Node.js, no browser
+1. GET the target homepage to collect Imperva session cookies (`visid_incap_*`, `nlbi_*`, `incap_ses_*`)
+2. Locate the sensor script path from page HTML (or use known endpoint table)
+3. POST a minimal sensor body — **the server accepts `solution.interrogation=null` and issues a token in degraded mode without validating Proof-of-Work**
+4. Return `reese84` token + all session cookies
+
+**reese84 tokens are obtained via a minimal sensor POST — no WebAssembly execution, no browser fingerprinting required.**
+
+#### Winning POST body (84 bytes):
+```json
+{"solution":{"interrogation":null},"old_token":null,"error":null,"performance":null}
+```
+
+Response: `{"token":"3:...","renewInSec":710,"cookieDomain":"cox.com"}`
 
 ## Architecture
 
@@ -51,7 +62,7 @@ node main.js --target https://www.corteva.com --call https://www.corteva.com/som
 src/
   session.js    — page fetch, challenge detection, SWJIYLWA discovery
   generator.js  — utmvc cookie generation (vm sandbox)
-  reese84.js    — reese84 token solver (Playwright)
+  reese84.js    — reese84 token solver (pure Node.js https, no browser)
   caller.js     — HTTP client for post-solve requests
   stubs.js      — browser stubs for vm sandbox
 main.js         — CLI entrypoint, challenge routing

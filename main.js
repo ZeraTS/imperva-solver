@@ -27,7 +27,7 @@ function parseArgs(argv) {
         '',
         'Supports:',
         '  utmvc  — legacy Incapsula ___utmvc cookie challenge',
-        '  reese84 — modern Imperva BON reese84 token challenge (uses Playwright)',
+        '  reese84 — modern Imperva BON reese84 token challenge (pure Node.js, no browser)',
       ].join('\n'));
       process.exit(0);
     }
@@ -39,16 +39,12 @@ function parseArgs(argv) {
 //  reese84 path
 // ─────────────────────────────────────────────
 async function handleReese84(args) {
-  console.error('[*] Challenge type: reese84 — using Playwright solver');
-  console.error('[*] Launching headless browser...');
+  console.error('[*] Challenge type: reese84 — pure Node.js minimal sensor POST');
 
   const { token, cookies, cookieHeader } = await solveReese84(args.target, { verbose: true });
 
-  // Build flat cookie map
-  const cookieMap = {};
-  for (const c of cookies) {
-    cookieMap[c.name] = c.value;
-  }
+  // cookies is a plain object {name: value, ...}
+  const cookieMap = cookies;
 
   console.error(`[*] reese84 token: ${token.slice(0, 60)}...`);
   console.error(`[*] Session cookies: ${Object.keys(cookieMap).join(', ')}`);
@@ -64,12 +60,7 @@ async function handleReese84(args) {
   const callUrl = args.call || args.target;
   console.error(`[*] Making request to ${callUrl}`);
 
-  // Build cookie header for the outbound call
-  const allCookieHeader = cookies
-    .map((c) => `${c.name}=${c.value}`)
-    .join('; ');
-
-  const response = await call(callUrl, { Cookie: allCookieHeader });
+  const response = await call(callUrl, { Cookie: cookieHeader });
   console.error(`[*] HTTP ${response.status}`);
 
   const body = response.body;

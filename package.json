@@ -10,7 +10,6 @@
     "start": "node main.js"
   },
   "dependencies": {
-    "isolated-vm": "^6.1.2",
-    "playwright": "^1.58.2"
+    "isolated-vm": "^6.1.2"
   }
 }
